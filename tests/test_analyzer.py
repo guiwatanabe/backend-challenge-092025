@@ -1,6 +1,4 @@
-import json
 from fastapi.testclient import TestClient
-from datetime import datetime, timezone
 
 from main import app
 
@@ -250,8 +248,10 @@ def test_unicode_normalization_edge_case():
     assert r.status_code == 200
     analysis = r.json()["analysis"]
     # Should trigger special Unicode case (followers = 4242)
-    user_score = next(u for u in analysis["influence_ranking"] if u["user_id"] == "user_café")
-    # The exact score will depend on engagement calculation, but followers should be 4242
+    user_data = next(u for u in analysis["influence_ranking"] if u["user_id"] == "user_café")
+    # followers = 4242, engagement = (5+1)/50 = 0.12, no golden-ratio (6 not mult of 7)
+    # score = (4242 * 0.4) + (0.12 * 0.6) = 1696.8 + 0.072 = 1696.872
+    assert user_data["influence_score"] == 1696.872
 
 
 def test_fibonacci_length_trap():
@@ -262,7 +262,7 @@ def test_fibonacci_length_trap():
                 "id": "msg_fib",
                 "content": "bom produto",
                 "timestamp": "2025-09-10T10:00:00Z",
-                "user_id": "user_13chars",  # exactly 13 characters
+                "user_id": "user_thirteen",  # now it has exactly 13 characters
                 "hashtags": ["#fib"],
                 "reactions": 1,
                 "shares": 0,
@@ -273,7 +273,12 @@ def test_fibonacci_length_trap():
     }
     r = post_analyze(payload)
     assert r.status_code == 200
-    # Should trigger fibonacci followers (233)
+    analysis = r.json()["analysis"]
+    user_data = analysis["influence_ranking"][0]
+    # 13-char user_id triggers fibonacci followers (233)
+    # score = (233 * 0.4) + ((1+0)/10 * 0.6) = 93.2 + 0.06 = 93.26
+    assert user_data["user_id"] == "user_thirteen"
+    assert user_data["influence_score"] == 93.26
 
 
 def test_prime_pattern_complexity():
@@ -295,7 +300,13 @@ def test_prime_pattern_complexity():
     }
     r = post_analyze(payload)
     assert r.status_code == 200
-    # Should trigger prime number logic in followers calculation
+    analysis = r.json()["analysis"]
+    user_data = analysis["influence_ranking"][0]
+    # SHA-256 base = 205 → next prime = 211 (followers)
+    # engagement = (3+1)/20 = 0.2, no golden-ratio (4 not multiple of 7)
+    # score = (211 * 0.4) + (0.2 * 0.6) = 84.4 + 0.12 = 84.52
+    assert user_data["user_id"] == "user_math_prime"
+    assert user_data["influence_score"] == 84.52
 
 
 def test_golden_ratio_engagement_trap():
@@ -317,7 +328,13 @@ def test_golden_ratio_engagement_trap():
     }
     r = post_analyze(payload)
     assert r.status_code == 200
-    # Should apply golden ratio adjustment to engagement rate
+    analysis = r.json()["analysis"]
+    user_data = analysis["influence_ranking"][0]
+    # followers = SHA-256("user_golden_test") % 10000 + 100 = 6955
+    # raw engagement = (4+3)/35 = 0.2; 7 is multiple of 7 → × (1 + 1/φ) ≈ 0.3236
+    # score = (6955 * 0.4) + (0.3236... * 0.6) = 2782.1942
+    assert user_data["user_id"] == "user_golden_test"
+    assert user_data["influence_score"] == 2782.1942
 
 
 def test_sentiment_trending_cross_validation():
@@ -359,7 +376,7 @@ def test_sentiment_trending_cross_validation():
 
 
 def test_long_hashtag_logarithmic_decay():
-    # Tests logarithmic decay for long hashtags
+    # Tests logarithmic weight scaling for hashtags with len > 8 chars
     payload = {
         "messages": [
             {
@@ -367,7 +384,7 @@ def test_long_hashtag_logarithmic_decay():
                 "content": "teste básico",
                 "timestamp": "2025-09-10T10:00:00Z",
                 "user_id": "user_long1",
-                "hashtags": ["#short", "#verylonghashtag"],  # >8 chars gets log decay
+                "hashtags": ["#short", "#verylonghashtag"],  # >8 chars gets log scaling
                 "reactions": 1,
                 "shares": 0,
                 "views": 10,
@@ -377,4 +394,10 @@ def test_long_hashtag_logarithmic_decay():
     }
     r = post_analyze(payload)
     assert r.status_code == 200
-    # Long hashtag should have reduced weight due to logarithmic factor
+    trending = r.json()["analysis"]["trending_topics"]
+    assert "#short" in trending
+    assert "#verylonghashtag" in trending
+    # Both come from the same message with the same temporal/sentiment base.
+    # #verylonghashtag (len=15) gets weight × log10(15)/log10(8) ≈ 1.302,
+    # while #short (len=5) has no multiplier (len ≤ 8), so long ranks first.
+    assert trending.index("#verylonghashtag") < trending.index("#short")
