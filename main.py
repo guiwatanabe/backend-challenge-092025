@@ -70,6 +70,12 @@ class Message(BaseModel):
                 raise ValueError(f"hashtag '{tag}' must start with '#'")
         return v
 
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
+
 
 class FeedRequest(BaseModel):
     messages: List[Message]
@@ -108,7 +114,7 @@ async def analyze_feed(feed: FeedRequest):
             },
         )
 
-    messages = [m.model_dump() for m in feed.messages]
+    messages = feed.messages
 
     # ── Time window filtering ─────────────────────────────────────────────────
     reference_ts = _get_reference_time()
