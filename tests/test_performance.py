@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import tracemalloc
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
@@ -46,4 +47,31 @@ def test_performance_under_200ms():
     assert r.status_code == 200
     # Target < 200ms for 1000 messages
     assert dt < 200.0, f"Took {dt:.2f} ms"
+
+
+def test_memory_under_20mb():
+    if os.getenv("RUN_PERF", "0") != "1":
+        import gc
+        import pytest
+        pytest.skip("Set RUN_PERF=1 to enable performance test")
+
+    import gc
+    gc.collect()  # free lingering allocs from previous test
+
+    payload = _gen_dataset(10_000)
+    payload_bytes = json.dumps(payload).encode()  # serialize before measuring
+    del payload  # free the dict so it doesn't skew the measurement
+
+    tracemalloc.start()
+    r = client.post(
+        "/analyze-feed",
+        content=payload_bytes,
+        headers={"Content-Type": "application/json"},
+    )
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert r.status_code == 200
+    peak_mb = peak / 1024 / 1024
+    assert peak_mb <= 20.0, f"Peak memory: {peak_mb:.2f} MB"
 
